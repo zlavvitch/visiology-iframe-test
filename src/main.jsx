@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
+import { inspectRecipient } from './recipient.js';
 
 const CHANNEL = 'visiology-filter-test-v1';
 const FILTER_GUID = '09712aeaff3e4d75955d1b9a0652c087';
@@ -43,14 +44,26 @@ function App() {
     if (!frame) return undefined;
     let connected = false;
     let attempts = 0;
+    let lastRecipientState = null;
     function ping() {
       if (connected) return;
       const target = iframeRef.current && iframeRef.current.contentWindow;
-      if (target) target.postMessage({ channel: CHANNEL, type: 'HELLO', session: frame.session }, frame.origin);
+      const recipientState = inspectRecipient(target, frame.origin);
+      if (recipientState === 'expected' || recipientState === 'cross-origin') {
+        target.postMessage({ channel: CHANNEL, type: 'HELLO', session: frame.session }, frame.origin);
+      } else if (recipientState !== lastRecipientState) {
+        setStatus('Ждём перехода iframe на сервер Visiology…');
+        log(recipientState === 'blank'
+          ? 'Iframe ещё содержит начальную пустую страницу. Сообщения пока не отправляются.'
+          : 'Iframe ещё не находится на ожидаемом сервере. Проверьте загрузку, CSP и перенаправления.');
+      }
+      lastRecipientState = recipientState;
       attempts += 1;
       if (attempts === 30) {
-        setStatus('Нет ответа принимающего кода. Проверьте его установку и нажмите «Проверить связь».');
-        log('За 30 секунд связь не подтверждена. Событие load не доказывает готовность дашборда.');
+        setStatus(recipientState === 'blank' || recipientState === 'different'
+          ? 'Iframe не перешёл на сервер Visiology. Проверьте Console и Network.'
+          : 'Нет ответа принимающего кода. Проверьте его установку и нажмите «Проверить связь».');
+        log('За 30 секунд связь не подтверждена. Проверьте содержимое iframe и ошибки браузера.');
       }
     }
     function receive(event) {
@@ -84,7 +97,7 @@ function App() {
     window.addEventListener('message', receive);
     ping();
     const interval = setInterval(ping, 1000);
-    const stop = setTimeout(() => clearInterval(interval), 30000);
+    const stop = setTimeout(() => clearInterval(interval), 29500);
     return () => {
       window.removeEventListener('message', receive);
       clearInterval(interval);
