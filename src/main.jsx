@@ -4,12 +4,16 @@ import './style.css';
 import { inspectRecipient } from './recipient.js';
 
 const CHANNEL = 'visiology-filter-test-v1';
-const FILTER_GUID = '09712aeaff3e4d75955d1b9a0652c087';
+const FILTERS = { dates: '49649e68eaaf4b37a20a88a9f33681b3', hospitals: 'e2fed87a050646b4a405891db926f42a' };
+const DEFAULT_DATES = ['2026-03-15T21:00:00.000Z', '2026-10-12T20:59:59.999Z'];
 
 function App() {
   const [url, setUrl] = useState('');
   const [frame, setFrame] = useState(null);
-  const [value, setValue] = useState('да');
+  const [dateMode, setDateMode] = useState('range');
+  const [from, setFrom] = useState('2026-03-16');
+  const [to, setTo] = useState('2026-10-12');
+  const [hospitals, setHospitals] = useState(['ГКБ 1', 'ГКБ 15']);
   const [status, setStatus] = useState('Откройте дашборд.');
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -71,12 +75,17 @@ function App() {
       if (event.origin !== frame.origin || !data || data.channel !== CHANNEL || data.session !== frame.session) return;
       // HELLO содержит случайный идентификатор, отправленный только origin iframe.
       // Ответ может прийти из вложенного окна виджета на том же origin.
-      if (data.type === 'READY' && event.source && data.filterGuid === FILTER_GUID) {
+      if (data.type === 'READY' && event.source && data.filters && Object.keys(FILTERS).every(id => data.filters[id] && data.filters[id].guid === FILTERS[id])) {
         connected = true;
         bridgeRef.current = event.source;
         setReady(true);
         setStatus('Связь установлена. Можно передавать фильтр.');
-        log('Принимающий код готов. Выбор в Visiology: ' + JSON.stringify(data.selected));
+        log('Принимающий код готов. Выбор в Visiology: ' + JSON.stringify(data.filters));
+        return;
+      }
+      if (!connected && (data.type === 'READY' || data.type === 'ERROR')) {
+        setStatus('Нужен новый код виджета и оба фильтра на открытом листе.');
+        log(data.type === 'ERROR' ? String(data.message) : 'Состав фильтров в READY не совпадает с тестом.');
         return;
       }
       if (event.source !== bridgeRef.current) return;
@@ -87,11 +96,11 @@ function App() {
       pendingRef.current = null;
       setBusy(false);
       if (data.type === 'RESULT') {
-        setStatus(`Фильтр подтверждён: «${pending.value}». Проверьте пересчёт данных.`);
-        log(`Visiology подтвердила выбор: ${JSON.stringify(data.selected)}${data.unchanged ? ' (уже было выбрано)' : ''}.`);
+        setStatus('Выбор подтверждён через API. Проверьте календарь и пересчёт данных.');
+        log('Подтверждение: ' + JSON.stringify(data.results));
       } else {
         setStatus('Visiology не подтвердила применение фильтра.');
-        log('Ошибка: ' + String(data.message).slice(0, 300));
+        log('Ошибка: ' + JSON.stringify(data));
       }
     }
     window.addEventListener('message', receive);
@@ -108,39 +117,76 @@ function App() {
     };
   }, [frame]);
 
-  function apply() {
+  function apply(scope = 'all', reset = false, defaults = false) {
     if (!frame || !ready || !bridgeRef.current || pendingRef.current) return;
+    let filters;
+    try {
+      filters = {};
+      if (scope !== 'hospitals') {
+        if (!reset && !defaults && (!from || (dateMode === 'range' && (!to || from > to)))) throw new Error('Проверьте даты начала и конца.');
+        filters.dates = reset ? [] : defaults ? DEFAULT_DATES.slice() : dateMode === 'single'
+          ? [new Date(from + 'T00:00:00.000+03:00').toISOString()]
+          : [new Date(from + 'T00:00:00.000+03:00').toISOString(), new Date(to + 'T23:59:59.999+03:00').toISOString()];
+      }
+      if (scope !== 'dates') filters.hospitals = reset ? [] : defaults ? ['ГКБ 1', 'ГКБ 15'] : hospitals;
+      if (!reset && filters.hospitals && !filters.hospitals.length) throw new Error('Выберите ГКБ или используйте кнопку сброса.');
+    } catch (failure) { setError(failure.message); return; }
+    setError('');
     const requestId = crypto.randomUUID();
     const timer = setTimeout(() => {
       pendingRef.current = null;
       setBusy(false);
-      setStatus('Нет подтверждения за 15 секунд. Проверьте фактический выбор в дашборде.');
-      log('Время ожидания ответа истекло. Автоматический повтор не выполняется.');
-    }, 15000);
-    pendingRef.current = { requestId, timer, value };
+      setReady(false);
+      setStatus('Нет подтверждения. Проверьте выбор и заново проверьте связь.');
+      log('Истёк срок ожидания. Автоматического повтора и отката нет.');
+    }, 25000);
+    pendingRef.current = { requestId, timer };
     setBusy(true);
-    setStatus(`Передаём «${value}»…`);
-    bridgeRef.current.postMessage({ channel: CHANNEL, type: 'SET_FILTER', session: frame.session, requestId, value }, frame.origin);
-    log(`Отправлено значение «${value}».`);
+    setStatus('Применяем выбранные фильтры…');
+    try {
+      bridgeRef.current.postMessage({ channel: CHANNEL, type: 'SET_FILTERS', session: frame.session, requestId, filters }, frame.origin);
+      log('Отправлено: ' + JSON.stringify(filters));
+    } catch (failure) {
+      clearTimeout(timer); pendingRef.current = null; setBusy(false); setError(failure.message);
+    }
   }
 
   return <main>
-    <header><span className="tag">ТЕСТ ИНТЕГРАЦИИ · ЭТАП 2</span><h1>Visiology внутри React</h1><p>Передача одиночного фильтра «да / нет» в авторизованный дашборд.</p></header>
+    <header><span className="tag">ТЕСТ ИНТЕГРАЦИИ · ДАТЫ И ГКБ</span><h1>Visiology внутри React</h1><p>Проверка двух фильтров по отдельности и вместе. Даты передаются по московскому времени.</p></header>
     <section className="panel">
       <form onSubmit={open}>
         <label htmlFor="dashboard-url">Ссылка на тестовый дашборд</label>
-        <div className="row"><input id="dashboard-url" type="url" required value={url} onChange={event => setUrl(event.target.value)} placeholder="https://…" autoComplete="off" /><button type="submit">Открыть дашборд</button></div>
+        <div className="row"><input id="dashboard-url" type="url" required value={url} onChange={event => setUrl(event.target.value)} placeholder="https://…" autoComplete="off" /><button type="submit" disabled={busy}>Открыть дашборд</button></div>
       </form>
       {error && <p role="alert" className="error">{error}</p>}
       <p className="hint">Сначала войдите в Visiology в отдельной вкладке этого браузера. Ссылка хранится только в памяти страницы.</p>
       {frame && <a href={frame.url} target="_blank" rel="noopener noreferrer">Открыть Visiology в отдельной вкладке</a>}
     </section>
     <section className="panel">
-      <h2>Фильтр «да / нет»</h2>
-      <label htmlFor="filter-value">Значение для передачи</label>
-      <div className="row"><select id="filter-value" value={value} disabled={busy} onChange={event => setValue(event.target.value)}><option value="да">да</option><option value="нет">нет</option></select><button type="button" disabled={!ready || busy} onClick={apply}>Применить фильтр</button><button type="button" className="secondary" disabled={!frame || busy} onClick={() => { setReady(false); bridgeRef.current = null; setStatus('Повторная проверка связи…'); setFrame(previous => ({ ...previous, session: crypto.randomUUID() })); }}>Проверить связь</button></div>
+      <h2>Даты и ГКБ</h2>
+      <fieldset disabled={busy}>
+        <legend>Фильтр дат</legend>
+        <div className="row">
+          <label>Режим<select value={dateMode} onChange={e => setDateMode(e.target.value)}><option value="range">Диапазон</option><option value="single">Одна дата</option></select></label>
+          <label>Начало / дата<input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label>
+          {dateMode === 'range' && <label>Конец<input type="date" value={to} onChange={e => setTo(e.target.value)} /></label>}
+        </div>
+        <button disabled={!ready} onClick={() => apply('dates')}>Применить даты</button>{' '}
+        <button className="secondary" disabled={!ready} onClick={() => apply('dates', true)}>Сбросить даты</button>
+      </fieldset>
+      <fieldset disabled={busy}>
+        <legend>ГКБ: выберите одну или обе</legend>
+        {['ГКБ 1', 'ГКБ 15'].map(name => <label key={name}><input style={{minWidth: 0}} type="checkbox" checked={hospitals.includes(name)} onChange={e => setHospitals(previous => e.target.checked ? [...previous, name] : previous.filter(value => value !== name))} /> {name}</label>)}
+        <button disabled={!ready} onClick={() => apply('hospitals')}>Применить ГКБ</button>{' '}
+        <button className="secondary" disabled={!ready} onClick={() => apply('hospitals', true)}>Сбросить ГКБ</button>
+      </fieldset>
+      <div className="row">
+        <button disabled={!ready || busy} onClick={() => apply()}>Применить оба фильтра</button>
+        <button disabled={!ready || busy} onClick={() => { setFrom('2026-03-16'); setTo('2026-10-12'); setDateMode('range'); setHospitals(['ГКБ 1', 'ГКБ 15']); apply('all', false, true); }}>Восстановить исходные значения</button>
+        <button className="secondary" disabled={!frame || busy} onClick={() => { setReady(false); bridgeRef.current = null; setStatus('Повторная проверка связи…'); setFrame(previous => ({ ...previous, session: crypto.randomUUID() })); }}>Проверить связь</button>
+      </div>
       <p role="status">{status}</p>
-      <p className="hint">Выберите «нет» → примените, затем «да» → примените, затем повторно «да». При открытии значение автоматически не передаётся.</p>
+      <p className="hint">Одна дата проверяется через [Date]. Если календарь или данные ведут себя иначе, проверьте диапазон с одинаковыми датами начала и конца. При открытии значения автоматически не отправляются.</p>
     </section>
     <section className="viewer" aria-label="Область дашборда">
       {frame ? <iframe ref={iframeRef} key={frame.loadId} src={frame.url} title="Тестовый дашборд Visiology" referrerPolicy="no-referrer" onLoad={() => { log('Событие iframe load. Ожидаем отдельного подтверждения связи.'); }} /> : <div className="placeholder">Вставьте ссылку и нажмите «Открыть дашборд».</div>}
