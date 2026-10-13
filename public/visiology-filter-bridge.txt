@@ -8,7 +8,7 @@
  * НЕ атомарное: при ошибке уже применённые фильтры автоматически не откатываются.
  */
 (function () {
-    // 1. Настройки. Заглушку origin обязательно заменить.
+    // 1. Настройки теста: фильтр календарных дат и обычный фильтр ГКБ.
     const USER_CONFIG = {
         allowedOrigin: 'https://visiology-iframe-test.vercel.app',
         channel: 'visiology-filter-test-v1',
@@ -19,7 +19,7 @@
             dates: {
                 guid: '49649e68eaaf4b37a20a88a9f33681b3',
                 mode: 'date', allowedValues: null, allowClear: true,
-                useTime: true // Сохраняем переданные границы суток с точностью до мс.
+                useTime: false // Календарные даты: время суток не участвует в фильтрации.
             },
             hospitals: {
                 guid: 'e2fed87a050646b4a405891db926f42a',
@@ -31,9 +31,17 @@
     const oldVersion = window.__visiologyReactFilterBridgeV1;
     if (oldVersion && typeof oldVersion.dispose === 'function') oldVersion.dispose();
     const previous = window[STATE_KEY];
+    const fingerprint = JSON.stringify(USER_CONFIG) + ':calendar-reuse-20261013';
+    // Visiology может повторно исполнить JS при пересчёте виджета.
+    // При той же конфигурации сохраняем текущую команду, таймеры и session.
+    if (previous && previous.fingerprint === fingerprint && previous.isAlive()) {
+        previous.refresh(visApi());
+        return;
+    }
     if (previous && typeof previous.dispose === 'function') previous.dispose();
 
-    const api = visApi();
+    let api = visApi();
+    const instanceId = 'bridge-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
     const filterIds = Object.keys(USER_CONFIG.filters);
     const loaded = Object.create(null);
     const listeners = [];
@@ -44,6 +52,7 @@
     let activeTimer = null;
     let pollTimer = null;
     let setupError = null;
+    let interruptCommand = null;
     const owns = function (object, key) {
         return Object.prototype.hasOwnProperty.call(object, key);
     };
@@ -60,18 +69,34 @@
     function selected(id) {
         return api.getSelectedValues(USER_CONFIG.filters[id].guid);
     }
-    // Формат стандартного фильтра — [[значение], [значение]].
-    // Для multiple сравниваем набор значений без учёта порядка.
+    // Отправитель передаёт ISO-моменты; календарный день определён в Москве.
+    function requestedDay(value) {
+        return new Date(Date.parse(value) + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    }
+    function apiDate(value) {
+        const parts = requestedDay(value).split('-').map(Number);
+        return new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+    // По журналу этой Visiology getSelectedValues возвращает даты как UTC 00:00.
+    // Также понимаем уже известные границы московских суток. Иные времена
+    // не угадываем: они дадут ошибку подтверждения с фактическим observed.
+    function observedDay(value) {
+        if (typeof value !== 'string' && Object.prototype.toString.call(value) !== '[object Date]') return null;
+        const date = new Date(value);
+        if (!Number.isFinite(date.getTime())) return null;
+        const iso = date.toISOString();
+        if (iso.slice(10) === 'T00:00:00.000Z') return iso.slice(0, 10);
+        if (iso.slice(10) === 'T21:00:00.000Z' || iso.slice(10) === 'T20:59:59.999Z') return requestedDay(iso);
+        return null;
+    }
     function matches(actual, values, id) {
         if (USER_CONFIG.filters[id].mode === 'date') {
             if (!Array.isArray(actual)) return false;
-            // В разных версиях API даты могут быть плоским массивом или строкой матрицы.
-            const flat = [].concat.apply([], actual);
-            if (flat.length !== values.length) return false;
-            return flat.every(function (value, index) {
-                if (!(value instanceof Date) && typeof value !== 'string') return false;
-                return new Date(value).getTime() === new Date(values[index]).getTime();
-            });
+            const days = [].concat.apply([], actual).map(observedDay);
+            const expected = values.map(requestedDay);
+            // Одиночный день API может вернуть как диапазон [день, день].
+            if (expected.length === 1 && days.length === 2) return days[0] === expected[0] && days[1] === expected[0];
+            return days.length === expected.length && days.every(function (day, index) { return day !== null && day === expected[index]; });
         }
         if (!Array.isArray(actual) || actual.length !== values.length) return false;
         if (!actual.every(function (row) {
@@ -84,7 +109,7 @@
     function send(type, details) {
         if (disposed || !peer || !session) return;
         peer.postMessage(Object.assign({
-            channel: USER_CONFIG.channel, type: type, session: session
+            channel: USER_CONFIG.channel, type: type, session: session, instanceId: instanceId
         }, details), USER_CONFIG.allowedOrigin);
     }
     function announce() {
@@ -151,10 +176,12 @@
         function finish(type, details) {
             if (completed || disposed) return;
             completed = true;
+            interruptCommand = null;
             busy = false;
             stopTimer();
             send(type, Object.assign({ requestId: requestId, results: results, appliedFilterIds: appliedFilterIds.slice() }, details));
         }
+        interruptCommand = function () { finish('ERROR', { code: 'BRIDGE_RESTARTED', message: 'Обработчик заменён во время применения. Проверьте выбор; повтор не выполнялся.' }); };
         function next() {
             if (completed || disposed) return;
             if (index === items.length) {
@@ -222,7 +249,7 @@
                 const config = USER_CONFIG.filters[item.id];
                 if (config.mode === 'date') {
                     api.setDateFilterSelectedValues(config.guid,
-                        item.values.map(function (value) { return new Date(value); }), config.useTime);
+                        item.values.map(apiDate), config.useTime);
                 } else {
                     api.setFilterSelectedValues(config.guid,
                         item.values.map(function (value) { return [value]; }), verify);
@@ -272,10 +299,14 @@
             current = current.parent;
         } catch (failure) { break; }
     }
-    // 6. Очистка предотвращает дубли после повторного запуска.
+    // 6. Повторный запуск того же кода сохраняет обработчик. Замена кода завершает ожидание ошибкой.
     // Тайм-аут или dispose не отменяет API и не откатывает значения.
     const state = {
+        fingerprint: fingerprint,
+        isAlive: function () { return !disposed; },
+        refresh: function (nextApi) { api = nextApi; announce(); },
         dispose: function () {
+            if (interruptCommand) interruptCommand();
             disposed = true;
             stopTimer();
             listeners.forEach(function (entry) { entry.target.removeEventListener('message', receive); });

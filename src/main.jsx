@@ -22,6 +22,8 @@ function App() {
   const iframeRef = useRef(null);
   const bridgeRef = useRef(null);
   const pendingRef = useRef(null);
+  const instanceRef = useRef(null);
+  const recoverRef = useRef(null);
 
   function log(message) {
     setEvents(previous => [{ time: new Date().toLocaleTimeString('ru-RU'), message }, ...previous].slice(0, 50));
@@ -49,8 +51,8 @@ function App() {
     let connected = false;
     let attempts = 0;
     let lastRecipientState = null;
+    let lastIssue = null;
     function ping() {
-      if (connected) return;
       const target = iframeRef.current && iframeRef.current.contentWindow;
       const recipientState = inspectRecipient(target, frame.origin);
       if (recipientState === 'expected' || recipientState === 'cross-origin') {
@@ -62,8 +64,8 @@ function App() {
           : 'Iframe ещё не находится на ожидаемом сервере. Проверьте загрузку, CSP и перенаправления.');
       }
       lastRecipientState = recipientState;
-      attempts += 1;
-      if (attempts === 30) {
+      if (!connected) attempts += 1;
+      if (!connected && attempts === 30) {
         setStatus(recipientState === 'blank' || recipientState === 'different'
           ? 'Iframe не перешёл на сервер Visiology. Проверьте Console и Network.'
           : 'Нет ответа принимающего кода. Проверьте его установку и нажмите «Проверить связь».');
@@ -76,21 +78,40 @@ function App() {
       // HELLO содержит случайный идентификатор, отправленный только origin iframe.
       // Ответ может прийти из вложенного окна виджета на том же origin.
       if (data.type === 'READY' && event.source && data.filters && Object.keys(FILTERS).every(id => data.filters[id] && data.filters[id].guid === FILTERS[id])) {
+        // Новая копия обработчика означает, что прежний результат неизвестен.
+        // Повторно SET_FILTERS автоматически не отправляем.
+        const pending = pendingRef.current;
+        const changed = instanceRef.current !== data.instanceId || bridgeRef.current !== event.source;
+        const shouldLog = !connected || changed;
+        if (pending && changed) {
+          clearTimeout(pending.timer);
+          pendingRef.current = null;
+          setBusy(false);
+          setStatus('Обработчик перезапущен. Связь восстановлена; проверьте фактический выбор.');
+          log('Ожидание прервано перезапуском. Команда не повторялась. Выбор: ' + JSON.stringify(data.filters));
+        } else if (shouldLog && !pending) {
+          setStatus('Связь установлена. Можно передавать фильтры.');
+        }
         connected = true;
+        attempts = 0;
+        lastIssue = null;
+        instanceRef.current = data.instanceId;
         bridgeRef.current = event.source;
         setReady(true);
-        setStatus('Связь установлена. Можно передавать фильтр.');
-        log('Принимающий код готов. Выбор в Visiology: ' + JSON.stringify(data.filters));
+        if (shouldLog) log('Принимающий код готов. Выбор в Visiology: ' + JSON.stringify(data.filters));
         return;
       }
       if (!connected && (data.type === 'READY' || data.type === 'ERROR')) {
         setStatus('Нужен новый код виджета и оба фильтра на открытом листе.');
-        log(data.type === 'ERROR' ? String(data.message) : 'Состав фильтров в READY не совпадает с тестом.');
+        const issue = data.type === 'ERROR' ? String(data.message) : 'Состав фильтров в READY не совпадает с тестом: ' + JSON.stringify(data.filters);
+        if (issue !== lastIssue) log(issue);
+        lastIssue = issue;
         return;
       }
       if (event.source !== bridgeRef.current) return;
       const pending = pendingRef.current;
       if (!pending || pending.requestId !== data.requestId) return;
+      if (data.instanceId !== instanceRef.current) return;
       if (data.type !== 'RESULT' && data.type !== 'ERROR') return;
       clearTimeout(pending.timer);
       pendingRef.current = null;
@@ -103,14 +124,15 @@ function App() {
         log('Ошибка: ' + JSON.stringify(data));
       }
     }
+    recoverRef.current = function () { connected = false; attempts = 0; bridgeRef.current = null; setReady(false); ping(); };
     window.addEventListener('message', receive);
     ping();
     const interval = setInterval(ping, 1000);
-    const stop = setTimeout(() => clearInterval(interval), 29500);
+    // HELLO продолжает работать после READY: восстанавливает связь при перезапуске виджета.
     return () => {
       window.removeEventListener('message', receive);
       clearInterval(interval);
-      clearTimeout(stop);
+      recoverRef.current = null;
       if (pendingRef.current) clearTimeout(pendingRef.current.timer);
       pendingRef.current = null;
       setBusy(false);
@@ -137,8 +159,9 @@ function App() {
       pendingRef.current = null;
       setBusy(false);
       setReady(false);
-      setStatus('Нет подтверждения. Проверьте выбор и заново проверьте связь.');
-      log('Истёк срок ожидания. Автоматического повтора и отката нет.');
+      setStatus('Нет подтверждения. Восстанавливаем связь; проверьте фактический выбор.');
+      log('Истёк срок ожидания. Восстанавливаем только связь, без повторной установки фильтров.');
+      if (recoverRef.current) recoverRef.current();
     }, 25000);
     pendingRef.current = { requestId, timer };
     setBusy(true);
@@ -164,21 +187,21 @@ function App() {
     </section>
     <section className="panel">
       <h2>Даты и ГКБ</h2>
-      <fieldset disabled={busy}>
+      <fieldset>
         <legend>Фильтр дат</legend>
         <div className="row">
           <label>Режим<select value={dateMode} onChange={e => setDateMode(e.target.value)}><option value="range">Диапазон</option><option value="single">Одна дата</option></select></label>
           <label>Начало / дата<input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label>
           {dateMode === 'range' && <label>Конец<input type="date" value={to} onChange={e => setTo(e.target.value)} /></label>}
         </div>
-        <button disabled={!ready} onClick={() => apply('dates')}>Применить даты</button>{' '}
-        <button className="secondary" disabled={!ready} onClick={() => apply('dates', true)}>Сбросить даты</button>
+        <button disabled={!ready || busy} onClick={() => apply('dates')}>Применить даты</button>{' '}
+        <button className="secondary" disabled={!ready || busy} onClick={() => apply('dates', true)}>Сбросить даты</button>
       </fieldset>
-      <fieldset disabled={busy}>
+      <fieldset>
         <legend>ГКБ: выберите одну или обе</legend>
         {['ГКБ 1', 'ГКБ 15'].map(name => <label key={name}><input style={{minWidth: 0}} type="checkbox" checked={hospitals.includes(name)} onChange={e => setHospitals(previous => e.target.checked ? [...previous, name] : previous.filter(value => value !== name))} /> {name}</label>)}
-        <button disabled={!ready} onClick={() => apply('hospitals')}>Применить ГКБ</button>{' '}
-        <button className="secondary" disabled={!ready} onClick={() => apply('hospitals', true)}>Сбросить ГКБ</button>
+        <button disabled={!ready || busy} onClick={() => apply('hospitals')}>Применить ГКБ</button>{' '}
+        <button className="secondary" disabled={!ready || busy} onClick={() => apply('hospitals', true)}>Сбросить ГКБ</button>
       </fieldset>
       <div className="row">
         <button disabled={!ready || busy} onClick={() => apply()}>Применить оба фильтра</button>
