@@ -7,7 +7,7 @@ const CHANNEL = 'visiology-filter-test-v1';
 const FILTERS = {"med_org": "34ed3988cfdd4498a73ef184ba8e9cd8", "doctors": "ec500187479f4be3b4ff67ff87cb2950", "positions": "18221ff86f214933af675eae17ee83f2", "months": "470ae632a05c455ea79715236b4a195b", "dates": "c7e385e7d084417a891099e3c5a79d8d"};
 const MODES = { med_org: 'single', doctors: 'single', positions: 'single', months: 'single', dates: 'date' };
 const DEFAULT_DATES = ['2026-07-31T21:00:00.000Z', '2026-09-30T20:59:59.999Z'];
-const DEFAULT_VALUES = { med_org: [], doctors: ['Абакарова А. Г.'], positions: ['Врач-терапевт участковый'], months: ['2026-09-01T00:00:00Z'], dates: DEFAULT_DATES };
+const DEFAULT_VALUES = { med_org: [], doctors: ['Абаева М. П.'], positions: ['Врач-терапевт участковый'], months: ['2026-09-01T00:00:00Z'], dates: DEFAULT_DATES };
 
 function App() {
   const [url, setUrl] = useState('');
@@ -15,7 +15,7 @@ function App() {
   const [dateMode, setDateMode] = useState('range');
   const [from, setFrom] = useState('2026-08-01');
   const [to, setTo] = useState('2026-09-30');
-  const [textValues, setTextValues] = useState({ med_org: '', doctors: 'Абакарова А. Г.', positions: 'Врач-терапевт участковый' });
+  const [textValues, setTextValues] = useState({ med_org: '', doctors: 'Абаева М. П.', positions: 'Врач-терапевт участковый' });
   const [month, setMonth] = useState('2026-09');
   const [status, setStatus] = useState('Откройте дашборд.');
   const [ready, setReady] = useState(false);
@@ -235,7 +235,7 @@ function App() {
       </fieldset>
       <div className="row">
         <button disabled={!ready || busy} onClick={() => apply()}>Применить все пять фильтров</button>
-        <button disabled={!ready || busy} onClick={() => { setFrom('2026-08-01'); setTo('2026-09-30'); setDateMode('range'); setMonth('2026-09'); setTextValues({ med_org: '', doctors: 'Абакарова А. Г.', positions: 'Врач-терапевт участковый' }); apply('all', false, true); }}>Восстановить исходные значения</button>
+        <button disabled={!ready || busy} onClick={() => { setFrom('2026-08-01'); setTo('2026-09-30'); setDateMode('range'); setMonth('2026-09'); setTextValues({ med_org: '', doctors: 'Абаева М. П.', positions: 'Врач-терапевт участковый' }); apply('all', false, true); }}>Восстановить исходные значения</button>
         <button className="secondary" disabled={!frame || busy} onClick={() => { setReady(false); bridgeRef.current = null; setStatus('Повторная проверка связи…'); setFrame(previous => ({ ...previous, session: crypto.randomUUID() })); }}>Проверить связь</button>
       </div>
       <p role="status">{status}</p>

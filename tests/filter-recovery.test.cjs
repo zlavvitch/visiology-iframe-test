@@ -87,7 +87,7 @@ test('current five-filter configuration applies defaults, clears MO and rejects 
  send({type:'HELLO'});
  assert.deepEqual(Object.keys(out[0].filters),['med_org','doctors','positions','months','dates']);
  actual[out[0].filters.med_org.guid]=[['МО тест']];
- send({type:'SET_FILTERS',requestId:'1',filters:{med_org:[],doctors:['Абакарова А. Г.'],positions:['Врач-терапевт участковый'],months:['2026-09-01T00:00:00Z'],dates:['2026-07-31T21:00:00.000Z','2026-09-30T20:59:59.999Z']}});
+ send({type:'SET_FILTERS',requestId:'1',filters:{med_org:[],doctors:['Абаева М. П.'],positions:['Врач-терапевт участковый'],months:['2026-09-01T00:00:00Z'],dates:['2026-07-31T21:00:00.000Z','2026-09-30T20:59:59.999Z']}});
  assert.equal(out.at(-1).type,'RESULT');assert.equal(calls.length,5);
  assert.equal(out[0].filters.months.mode,'single');
  assert.equal(JSON.stringify(actual[out[0].filters.months.guid]),'[["2026-09-01T00:00:00Z"]]');
