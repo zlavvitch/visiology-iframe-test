@@ -55,6 +55,7 @@ function App() {
     let attempts = 0;
     let lastRecipientState = null;
     let lastIssue = null;
+    let heardBridge = false;
     function ping() {
       const target = iframeRef.current && iframeRef.current.contentWindow;
       const recipientState = inspectRecipient(target, frame.origin);
@@ -69,15 +70,23 @@ function App() {
       lastRecipientState = recipientState;
       if (!connected) attempts += 1;
       if (!connected && attempts === 30) {
-        setStatus(recipientState === 'blank' || recipientState === 'different'
+        setStatus(heardBridge ? 'Код виджета отвечает, но готовность фильтров не подтверждена. Смотрите журнал.' : recipientState === 'blank' || recipientState === 'different'
           ? 'Iframe не перешёл на сервер Visiology. Проверьте Console и Network.'
           : 'Нет ответа принимающего кода. Проверьте его установку и нажмите «Проверить связь».');
-        log('За 30 секунд связь не подтверждена. Проверьте содержимое iframe и ошибки браузера.');
+        log(heardBridge ? 'За 30 секунд фильтры не готовы. Код виджета отвечает; список ожидания — в журнале.' : 'За 30 секунд нет ответа кода виджета. Проверьте его установку, allowedOrigin и ошибки Console.');
       }
     }
     function receive(event) {
       const data = event.data;
       if (event.origin !== frame.origin || !data || data.channel !== CHANNEL || data.session !== frame.session) return;
+      if (data.type === 'WAITING' && event.source && !connected) {
+        heardBridge = true;
+        const issue = 'Код виджета отвечает. Ожидаем события загрузки: ' + JSON.stringify(data.waitingFor) + '; загружены: ' + JSON.stringify(data.loadedFilterIds);
+        setStatus('Связь с кодом есть. Ожидаем готовность фильтров.');
+        if (issue !== lastIssue) log(issue);
+        lastIssue = issue;
+        return;
+      }
       // HELLO содержит случайный идентификатор, отправленный только origin iframe.
       // Ответ может прийти из вложенного окна виджета на том же origin.
       if (data.type === 'READY' && event.source && data.filters && Object.keys(data.filters).length === Object.keys(FILTERS).length && Object.keys(FILTERS).every(id => data.filters[id] && data.filters[id].guid === FILTERS[id] && data.filters[id].mode === MODES[id])) {

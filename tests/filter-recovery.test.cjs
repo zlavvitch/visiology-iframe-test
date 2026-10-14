@@ -94,3 +94,17 @@ test('current five-filter configuration applies defaults, clears MO and rejects 
  assert.equal(out.at(-1).type,'ERROR');assert.equal(calls.length,5);
  } finally {win.__visiologyReactFilterBridge.dispose();}
 });
+
+test('receiver reports missing load events without declaring READY',()=>{
+ const out=[], handlers=[], loaded=[];
+ const host={postMessage:m=>out.push(m)};
+ const win={location:{origin:'https://sc.emias.ru'},parent:host,addEventListener:(t,f)=>{if(t==='message')handlers.push(f)},removeEventListener:()=>{}};
+ const api={getSelectedValues:()=>[],onWidgetLoadedListener:(c,f)=>loaded.push(f)};
+ vm.runInNewContext(currentCode,{window:win,visApi:()=>api,Date,setTimeout,clearTimeout,setInterval,clearInterval});
+ const hello=()=>handlers.forEach(f=>f({origin:'https://visiology-iframe-test.vercel.app',source:host,data:{channel:'visiology-filter-test-v1',session:'s',type:'HELLO'}}));
+ try {
+ hello();assert.equal(out.at(-1).type,'WAITING');assert.equal(out.at(-1).waitingFor.length,5);
+ loaded[0]();assert.equal(out.at(-1).waitingFor.length,4);
+ loaded.slice(1).forEach(f=>f());assert.equal(out.at(-1).type,'READY');
+ } finally {win.__visiologyReactFilterBridge.dispose();}
+});

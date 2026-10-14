@@ -56,7 +56,7 @@
     const oldVersion = window.__visiologyReactFilterBridgeV1;
     if (oldVersion && typeof oldVersion.dispose === 'function') oldVersion.dispose();
     const previous = window[STATE_KEY];
-    const fingerprint = JSON.stringify(USER_CONFIG) + ':calendar-reuse-20261013';
+    const fingerprint = JSON.stringify(USER_CONFIG) + ':readiness-diagnostics-20261014';
     // Visiology может повторно исполнить JS при пересчёте виджета.
     // При той же конфигурации сохраняем текущую команду, таймеры и session.
     if (previous && previous.fingerprint === fingerprint && previous.isAlive()) {
@@ -140,7 +140,16 @@
     function announce() {
         if (!peer || !session || disposed || busy) return;
         if (setupError) { send('ERROR', { code: 'SETUP_ERROR', message: setupError }); return; }
-        if (!isReady()) return;
+        if (!isReady()) {
+            // HELLO дошёл, но не все события загрузки получены. Это не READY.
+            send('WAITING', {
+                waitingFor: filterIds.filter(function (id) { return !loaded[id]; }).map(function (id) {
+                    return { id: id, guid: USER_CONFIG.filters[id].guid };
+                }),
+                loadedFilterIds: filterIds.filter(function (id) { return loaded[id]; })
+            });
+            return;
+        }
         try {
             const filters = Object.create(null);
             filterIds.forEach(function (id) {
