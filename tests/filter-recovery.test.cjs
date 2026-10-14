@@ -80,15 +80,17 @@ test('current five-filter configuration applies defaults, clears MO and rejects 
  const win={location:{origin:'https://sc.emias.ru'},parent:host,addEventListener:(t,f)=>{if(t==='message')handlers.push(f)},removeEventListener:()=>{}};
  const api={getSelectedValues:g=>actual[g]||[],onWidgetLoadedListener:(c,f)=>f(),
  setFilterSelectedValues:(g,v,cb)=>{calls.push(g);actual[g]=v;cb();},
- setDateFilterSelectedValues:(g,v)=>{calls.push(g);actual[g]=[v.map(d=>new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())).toISOString())];}};
+ setDateFilterSelectedValues:(g,v)=>{assert.notEqual(g,'470ae632a05c455ea79715236b4a195b');calls.push(g);actual[g]=[v.map(d=>new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())).toISOString())];}};
  vm.runInNewContext(currentCode,{window:win,visApi:()=>api,Date,setTimeout,clearTimeout,setInterval,clearInterval});
  const send=m=>handlers.forEach(f=>f({origin:'https://visiology-iframe-test.vercel.app',source:host,data:{channel:'visiology-filter-test-v1',session:'s',...m}}));
  try {
  send({type:'HELLO'});
  assert.deepEqual(Object.keys(out[0].filters),['med_org','doctors','positions','months','dates']);
  actual[out[0].filters.med_org.guid]=[['МО тест']];
- send({type:'SET_FILTERS',requestId:'1',filters:{med_org:[],doctors:['Абакарова А. Г.'],positions:['Врач-терапевт участковый'],months:['2026-09-01T00:00:00.000Z'],dates:['2026-07-31T21:00:00.000Z','2026-09-30T20:59:59.999Z']}});
+ send({type:'SET_FILTERS',requestId:'1',filters:{med_org:[],doctors:['Абакарова А. Г.'],positions:['Врач-терапевт участковый'],months:['2026-09-01T00:00:00Z'],dates:['2026-07-31T21:00:00.000Z','2026-09-30T20:59:59.999Z']}});
  assert.equal(out.at(-1).type,'RESULT');assert.equal(calls.length,5);
+ assert.equal(out[0].filters.months.mode,'single');
+ assert.equal(JSON.stringify(actual[out[0].filters.months.guid]),'[["2026-09-01T00:00:00Z"]]');
  assert.equal(JSON.stringify(actual[out[0].filters.med_org.guid]),'[]');
  send({type:'SET_FILTERS',requestId:'2',filters:{doctors:['А','Б']}});
  assert.equal(out.at(-1).type,'ERROR');assert.equal(calls.length,5);

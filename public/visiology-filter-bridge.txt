@@ -10,7 +10,7 @@
 (function () {
     // 1. Настройки теста: МО, врач, должность, месячный период и даты.
     // null у allowedValues разрешает любую строку, но наличие в данных проверяет API.
-    // months передаётся как одна дата начала месяца; гранулярность задаётся виджетом.
+    // months — обычный одиночный фильтр: точный строковый ключ без преобразования в Date.
     const USER_CONFIG = {
         allowedOrigin: 'https://visiology-iframe-test.vercel.app',
         channel: 'visiology-filter-test-v1',
@@ -38,10 +38,9 @@
             },
             "months": {
                 "guid": "470ae632a05c455ea79715236b4a195b",
-                "mode": "date",
+                "mode": "single",
                 "allowedValues": null,
-                "allowClear": false,
-                "useTime": false
+                "allowClear": false
             },
             "dates": {
                 "guid": "c7e385e7d084417a891099e3c5a79d8d",

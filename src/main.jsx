@@ -5,9 +5,9 @@ import { inspectRecipient } from './recipient.js';
 
 const CHANNEL = 'visiology-filter-test-v1';
 const FILTERS = {"med_org": "34ed3988cfdd4498a73ef184ba8e9cd8", "doctors": "ec500187479f4be3b4ff67ff87cb2950", "positions": "18221ff86f214933af675eae17ee83f2", "months": "470ae632a05c455ea79715236b4a195b", "dates": "c7e385e7d084417a891099e3c5a79d8d"};
-const MODES = { med_org: 'single', doctors: 'single', positions: 'single', months: 'date', dates: 'date' };
+const MODES = { med_org: 'single', doctors: 'single', positions: 'single', months: 'single', dates: 'date' };
 const DEFAULT_DATES = ['2026-07-31T21:00:00.000Z', '2026-09-30T20:59:59.999Z'];
-const DEFAULT_VALUES = { med_org: [], doctors: ['Абакарова А. Г.'], positions: ['Врач-терапевт участковый'], months: ['2026-09-01T00:00:00.000Z'], dates: DEFAULT_DATES };
+const DEFAULT_VALUES = { med_org: [], doctors: ['Абакарова А. Г.'], positions: ['Врач-терапевт участковый'], months: ['2026-09-01T00:00:00Z'], dates: DEFAULT_DATES };
 
 function App() {
   const [url, setUrl] = useState('');
@@ -167,7 +167,7 @@ function App() {
             : [new Date(from + 'T00:00:00.000+03:00').toISOString(), new Date(to + 'T23:59:59.999+03:00').toISOString()];
         } else if (id === 'months') {
           if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('Выберите месяц.');
-          filters.months = [new Date(month + '-01T00:00:00.000Z').toISOString()];
+          filters.months = [month + '-01T00:00:00Z'];
         } else {
           const value = textValues[id].trim();
           if (!value && id !== 'med_org') throw new Error('Укажите значение: ' + id);
@@ -231,7 +231,7 @@ function App() {
         <legend>Фильтр период главный</legend>
         <label>Месяц<input type="month" value={month} onChange={e => setMonth(e.target.value)} /></label>
         <button disabled={!ready || busy} onClick={() => apply('months')}>Применить месяц</button>
-        <p className="hint">Передаётся одна дата начала месяца. Проверьте в Visiology, что выбор охватывает весь месяц.</p>
+        <p className="hint">Обычный фильтр: передаётся строковый ключ месяца, например 2026-09-01T00:00:00Z.</p>
       </fieldset>
       <div className="row">
         <button disabled={!ready || busy} onClick={() => apply()}>Применить все пять фильтров</button>
