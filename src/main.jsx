@@ -4,16 +4,19 @@ import './style.css';
 import { inspectRecipient } from './recipient.js';
 
 const CHANNEL = 'visiology-filter-test-v1';
-const FILTERS = { dates: '49649e68eaaf4b37a20a88a9f33681b3', hospitals: 'e2fed87a050646b4a405891db926f42a' };
-const DEFAULT_DATES = ['2026-03-15T21:00:00.000Z', '2026-10-12T20:59:59.999Z'];
+const FILTERS = {"med_org": "34ed3988cfdd4498a73ef184ba8e9cd8", "doctors": "ec500187479f4be3b4ff67ff87cb2950", "positions": "18221ff86f214933af675eae17ee83f2", "months": "470ae632a05c455ea79715236b4a195b", "dates": "c7e385e7d084417a891099e3c5a79d8d"};
+const MODES = { med_org: 'single', doctors: 'single', positions: 'single', months: 'date', dates: 'date' };
+const DEFAULT_DATES = ['2026-07-31T21:00:00.000Z', '2026-09-30T20:59:59.999Z'];
+const DEFAULT_VALUES = { med_org: [], doctors: ['Абакарова А. Г.'], positions: ['Врач-терапевт участковый'], months: ['2026-09-01T00:00:00.000Z'], dates: DEFAULT_DATES };
 
 function App() {
   const [url, setUrl] = useState('');
   const [frame, setFrame] = useState(null);
   const [dateMode, setDateMode] = useState('range');
-  const [from, setFrom] = useState('2026-03-16');
-  const [to, setTo] = useState('2026-10-12');
-  const [hospitals, setHospitals] = useState(['ГКБ 1', 'ГКБ 15']);
+  const [from, setFrom] = useState('2026-08-01');
+  const [to, setTo] = useState('2026-09-30');
+  const [textValues, setTextValues] = useState({ med_org: '', doctors: 'Абакарова А. Г.', positions: 'Врач-терапевт участковый' });
+  const [month, setMonth] = useState('2026-09');
   const [status, setStatus] = useState('Откройте дашборд.');
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -77,7 +80,7 @@ function App() {
       if (event.origin !== frame.origin || !data || data.channel !== CHANNEL || data.session !== frame.session) return;
       // HELLO содержит случайный идентификатор, отправленный только origin iframe.
       // Ответ может прийти из вложенного окна виджета на том же origin.
-      if (data.type === 'READY' && event.source && data.filters && Object.keys(FILTERS).every(id => data.filters[id] && data.filters[id].guid === FILTERS[id])) {
+      if (data.type === 'READY' && event.source && data.filters && Object.keys(data.filters).length === Object.keys(FILTERS).length && Object.keys(FILTERS).every(id => data.filters[id] && data.filters[id].guid === FILTERS[id] && data.filters[id].mode === MODES[id])) {
         // Новая копия обработчика означает, что прежний результат неизвестен.
         // Повторно SET_FILTERS автоматически не отправляем.
         const pending = pendingRef.current;
@@ -102,7 +105,7 @@ function App() {
         return;
       }
       if (!connected && (data.type === 'READY' || data.type === 'ERROR')) {
-        setStatus('Нужен новый код виджета и оба фильтра на открытом листе.');
+        setStatus('Нужен новый код виджета и все пять фильтров на открытом листе.');
         const issue = data.type === 'ERROR' ? String(data.message) : 'Состав фильтров в READY не совпадает с тестом: ' + JSON.stringify(data.filters);
         if (issue !== lastIssue) log(issue);
         lastIssue = issue;
@@ -144,14 +147,24 @@ function App() {
     let filters;
     try {
       filters = {};
-      if (scope !== 'hospitals') {
-        if (!reset && !defaults && (!from || (dateMode === 'range' && (!to || from > to)))) throw new Error('Проверьте даты начала и конца.');
-        filters.dates = reset ? [] : defaults ? DEFAULT_DATES.slice() : dateMode === 'single'
-          ? [new Date(from + 'T00:00:00.000+03:00').toISOString()]
-          : [new Date(from + 'T00:00:00.000+03:00').toISOString(), new Date(to + 'T23:59:59.999+03:00').toISOString()];
-      }
-      if (scope !== 'dates') filters.hospitals = reset ? [] : defaults ? ['ГКБ 1', 'ГКБ 15'] : hospitals;
-      if (!reset && filters.hospitals && !filters.hospitals.length) throw new Error('Выберите ГКБ или используйте кнопку сброса.');
+      const ids = scope === 'all' ? Object.keys(FILTERS) : [scope];
+      ids.forEach(id => {
+        if (defaults) { filters[id] = DEFAULT_VALUES[id].slice(); return; }
+        if (reset) { filters[id] = []; return; }
+        if (id === 'dates') {
+          if (!from || (dateMode === 'range' && (!to || from > to))) throw new Error('Проверьте даты начала и конца.');
+          filters.dates = dateMode === 'single'
+            ? [new Date(from + 'T00:00:00.000+03:00').toISOString()]
+            : [new Date(from + 'T00:00:00.000+03:00').toISOString(), new Date(to + 'T23:59:59.999+03:00').toISOString()];
+        } else if (id === 'months') {
+          if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('Выберите месяц.');
+          filters.months = [new Date(month + '-01T00:00:00.000Z').toISOString()];
+        } else {
+          const value = textValues[id].trim();
+          if (!value && id !== 'med_org') throw new Error('Укажите значение: ' + id);
+          filters[id] = value ? [value] : [];
+        }
+      });
     } catch (failure) { setError(failure.message); return; }
     setError('');
     const requestId = crypto.randomUUID();
@@ -162,7 +175,7 @@ function App() {
       setStatus('Нет подтверждения. Восстанавливаем связь; проверьте фактический выбор.');
       log('Истёк срок ожидания. Восстанавливаем только связь, без повторной установки фильтров.');
       if (recoverRef.current) recoverRef.current();
-    }, 25000);
+    }, Object.keys(filters).length * 10000 + 5000);
     pendingRef.current = { requestId, timer };
     setBusy(true);
     setStatus('Применяем выбранные фильтры…');
@@ -175,7 +188,7 @@ function App() {
   }
 
   return <main>
-    <header><span className="tag">ТЕСТ ИНТЕГРАЦИИ · ДАТЫ И ГКБ</span><h1>Visiology внутри React</h1><p>Проверка двух фильтров по отдельности и вместе. Даты передаются по московскому времени.</p></header>
+    <header><span className="tag">ТЕСТ ИНТЕГРАЦИИ · ПЯТЬ ФИЛЬТРОВ</span><h1>Visiology внутри React</h1><p>МО, врач, должность, месячный период и даты — по отдельности и вместе.</p></header>
     <section className="panel">
       <form onSubmit={open}>
         <label htmlFor="dashboard-url">Ссылка на тестовый дашборд</label>
@@ -186,7 +199,7 @@ function App() {
       {frame && <a href={frame.url} target="_blank" rel="noopener noreferrer">Открыть Visiology в отдельной вкладке</a>}
     </section>
     <section className="panel">
-      <h2>Даты и ГКБ</h2>
+      <h2>Фильтры дашборда</h2>
       <fieldset>
         <legend>Фильтр дат</legend>
         <div className="row">
@@ -197,15 +210,23 @@ function App() {
         <button disabled={!ready || busy} onClick={() => apply('dates')}>Применить даты</button>{' '}
         <button className="secondary" disabled={!ready || busy} onClick={() => apply('dates', true)}>Сбросить даты</button>
       </fieldset>
+      {[
+        ['med_org', 'Фильтр МО'], ['doctors', 'Фильтр врач'], ['positions', 'Фильтр должность']
+      ].map(([id, label]) => <fieldset key={id}>
+        <legend>{label}</legend>
+        <label>Точное значение из Visiology<input type="text" value={textValues[id]} placeholder={id === 'med_org' ? 'Все (пустое поле)' : ''} onChange={e => setTextValues(previous => ({ ...previous, [id]: e.target.value }))} /></label>
+        <button disabled={!ready || busy} onClick={() => apply(id)}>Применить</button>
+        {id === 'med_org' && <button className="secondary" disabled={!ready || busy} onClick={() => { setTextValues(previous => ({ ...previous, med_org: '' })); apply('med_org', true); }}>Все МО</button>}
+      </fieldset>)}
       <fieldset>
-        <legend>ГКБ: выберите одну или обе</legend>
-        {['ГКБ 1', 'ГКБ 15'].map(name => <label key={name}><input style={{minWidth: 0}} type="checkbox" checked={hospitals.includes(name)} onChange={e => setHospitals(previous => e.target.checked ? [...previous, name] : previous.filter(value => value !== name))} /> {name}</label>)}
-        <button disabled={!ready || busy} onClick={() => apply('hospitals')}>Применить ГКБ</button>{' '}
-        <button className="secondary" disabled={!ready || busy} onClick={() => apply('hospitals', true)}>Сбросить ГКБ</button>
+        <legend>Фильтр период главный</legend>
+        <label>Месяц<input type="month" value={month} onChange={e => setMonth(e.target.value)} /></label>
+        <button disabled={!ready || busy} onClick={() => apply('months')}>Применить месяц</button>
+        <p className="hint">Передаётся одна дата начала месяца. Проверьте в Visiology, что выбор охватывает весь месяц.</p>
       </fieldset>
       <div className="row">
-        <button disabled={!ready || busy} onClick={() => apply()}>Применить оба фильтра</button>
-        <button disabled={!ready || busy} onClick={() => { setFrom('2026-03-16'); setTo('2026-10-12'); setDateMode('range'); setHospitals(['ГКБ 1', 'ГКБ 15']); apply('all', false, true); }}>Восстановить исходные значения</button>
+        <button disabled={!ready || busy} onClick={() => apply()}>Применить все пять фильтров</button>
+        <button disabled={!ready || busy} onClick={() => { setFrom('2026-08-01'); setTo('2026-09-30'); setDateMode('range'); setMonth('2026-09'); setTextValues({ med_org: '', doctors: 'Абакарова А. Г.', positions: 'Врач-терапевт участковый' }); apply('all', false, true); }}>Восстановить исходные значения</button>
         <button className="secondary" disabled={!frame || busy} onClick={() => { setReady(false); bridgeRef.current = null; setStatus('Повторная проверка связи…'); setFrame(previous => ({ ...previous, session: crypto.randomUUID() })); }}>Проверить связь</button>
       </div>
       <p role="status">{status}</p>

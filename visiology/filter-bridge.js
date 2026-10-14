@@ -8,22 +8,47 @@
  * НЕ атомарное: при ошибке уже применённые фильтры автоматически не откатываются.
  */
 (function () {
-    // 1. Настройки теста: фильтр календарных дат и обычный фильтр ГКБ.
+    // 1. Настройки теста: МО, врач, должность, месячный период и даты.
+    // null у allowedValues разрешает любую строку, но наличие в данных проверяет API.
+    // months передаётся как одна дата начала месяца; гранулярность задаётся виджетом.
     const USER_CONFIG = {
         allowedOrigin: 'https://visiology-iframe-test.vercel.app',
         channel: 'visiology-filter-test-v1',
         confirmationTimeoutMs: 10000,
         listenerGuid: 'visiology-react-filter-test-loaded',
-        defaultFilterId: 'hospitals',
+        defaultFilterId: 'med_org',
         filters: {
-            dates: {
-                guid: '49649e68eaaf4b37a20a88a9f33681b3',
-                mode: 'date', allowedValues: null, allowClear: true,
-                useTime: false // Календарные даты: время суток не участвует в фильтрации.
+            "med_org": {
+                "guid": "34ed3988cfdd4498a73ef184ba8e9cd8",
+                "mode": "single",
+                "allowedValues": null,
+                "allowClear": true
             },
-            hospitals: {
-                guid: 'e2fed87a050646b4a405891db926f42a',
-                mode: 'multiple', allowedValues: ['ГКБ 1', 'ГКБ 15'], allowClear: true
+            "doctors": {
+                "guid": "ec500187479f4be3b4ff67ff87cb2950",
+                "mode": "single",
+                "allowedValues": null,
+                "allowClear": false
+            },
+            "positions": {
+                "guid": "18221ff86f214933af675eae17ee83f2",
+                "mode": "single",
+                "allowedValues": null,
+                "allowClear": false
+            },
+            "months": {
+                "guid": "470ae632a05c455ea79715236b4a195b",
+                "mode": "date",
+                "allowedValues": null,
+                "allowClear": false,
+                "useTime": false
+            },
+            "dates": {
+                "guid": "c7e385e7d084417a891099e3c5a79d8d",
+                "mode": "date",
+                "allowedValues": null,
+                "allowClear": true,
+                "useTime": false
             }
         }
     };

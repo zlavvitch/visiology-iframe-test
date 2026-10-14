@@ -4,7 +4,10 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
 const root=path.join(__dirname,'..');
-const code=fs.readFileSync(path.join(root,'visiology/filter-bridge.js'),'utf8');
+const currentCode=fs.readFileSync(path.join(root,'visiology/filter-bridge.js'),'utf8');
+// Keep the original regression fixture independent of the active dashboard config.
+const code=currentCode.replace(/defaultFilterId: 'med_org'/, "defaultFilterId: 'hospitals'").replace(/        filters: \{[\s\S]*?\n    };/, `        filters: { dates: {guid: '49649e68eaaf4b37a20a88a9f33681b3', mode:'date',allowedValues:null,allowClear:true,useTime:false}, hospitals:{guid:'e2fed87a050646b4a405891db926f42a',mode:'multiple',allowedValues:['ГКБ 1','ГКБ 15'],allowClear:true} }
+    };`);
 const guids={dates:'49649e68eaaf4b37a20a88a9f33681b3',hospitals:'e2fed87a050646b4a405891db926f42a'};
 const defaults=['2026-03-15T21:00:00.000Z','2026-10-12T20:59:59.999Z'];
 function setup(options={}) {
@@ -57,16 +60,37 @@ test('host heartbeat restores a restarted bridge without replaying SET_FILTERS',
  const body=main.split('  useEffect(() => {')[1].split('  }, [frame]);')[0];
  const messages=[],logs=[],timers=[],cleared=[],state={};let receive;
  const oldSource={},newSource={};
- const env={frame:{origin:'https://sc.emias.ru',session:'s'},CHANNEL:'visiology-filter-test-v1',FILTERS:guids,
+ const env={frame:{origin:'https://sc.emias.ru',session:'s'},CHANNEL:'visiology-filter-test-v1',FILTERS:guids,MODES:{dates:'date',hospitals:'multiple'},
  iframeRef:{current:{contentWindow:{postMessage:m=>messages.push(m)}}},bridgeRef:{current:null},instanceRef:{current:null},pendingRef:{current:null},recoverRef:{current:null},
  inspectRecipient:()=> 'cross-origin',setReady:v=>state.ready=v,setBusy:v=>state.busy=v,setStatus:v=>state.status=v,log:v=>logs.push(v),
  window:{addEventListener:(t,f)=>receive=f,removeEventListener:()=>{}},setInterval:f=>{timers.push(f);return 1},clearInterval:()=>{},clearTimeout:v=>cleared.push(v)};
  const cleanup=vm.runInNewContext('(function(){'+body+'})()',env);
- const reply=(source,instanceId,extra={})=>receive({origin:env.frame.origin,source,data:{type:'READY',channel:env.CHANNEL,session:'s',instanceId,filters:{dates:{guid:guids.dates},hospitals:{guid:guids.hospitals}},...extra}});
+ const reply=(source,instanceId,extra={})=>receive({origin:env.frame.origin,source,data:{type:'READY',channel:env.CHANNEL,session:'s',instanceId,filters:{dates:{guid:guids.dates,mode:'date'},hospitals:{guid:guids.hospitals,mode:'multiple'}},...extra}});
  reply(oldSource,'old');assert.equal(state.ready,true);
  env.pendingRef.current={requestId:'r',timer:7};state.busy=true;
  timers[0]();assert.equal(messages.length,2);assert.equal(messages[1].type,'HELLO');
  reply(newSource,'new');assert.equal(state.busy,false);assert.equal(env.pendingRef.current,null);assert.equal(state.ready,true);assert.ok(cleared.includes(7));assert.equal(messages.filter(m=>m.type==='SET_FILTERS').length,0);
  const n=logs.length;reply(newSource,'new');assert.equal(logs.length,n);
  env.recoverRef.current();reply(newSource,'new');assert.equal(state.ready,true);cleanup();
+});
+
+test('current five-filter configuration applies defaults, clears MO and rejects multiple doctor values',()=>{
+ const out=[], actual={}, calls=[], handlers=[];
+ const host={postMessage:m=>out.push(m)};
+ const win={location:{origin:'https://sc.emias.ru'},parent:host,addEventListener:(t,f)=>{if(t==='message')handlers.push(f)},removeEventListener:()=>{}};
+ const api={getSelectedValues:g=>actual[g]||[],onWidgetLoadedListener:(c,f)=>f(),
+ setFilterSelectedValues:(g,v,cb)=>{calls.push(g);actual[g]=v;cb();},
+ setDateFilterSelectedValues:(g,v)=>{calls.push(g);actual[g]=[v.map(d=>new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())).toISOString())];}};
+ vm.runInNewContext(currentCode,{window:win,visApi:()=>api,Date,setTimeout,clearTimeout,setInterval,clearInterval});
+ const send=m=>handlers.forEach(f=>f({origin:'https://visiology-iframe-test.vercel.app',source:host,data:{channel:'visiology-filter-test-v1',session:'s',...m}}));
+ try {
+ send({type:'HELLO'});
+ assert.deepEqual(Object.keys(out[0].filters),['med_org','doctors','positions','months','dates']);
+ actual[out[0].filters.med_org.guid]=[['МО тест']];
+ send({type:'SET_FILTERS',requestId:'1',filters:{med_org:[],doctors:['Абакарова А. Г.'],positions:['Врач-терапевт участковый'],months:['2026-09-01T00:00:00.000Z'],dates:['2026-07-31T21:00:00.000Z','2026-09-30T20:59:59.999Z']}});
+ assert.equal(out.at(-1).type,'RESULT');assert.equal(calls.length,5);
+ assert.equal(JSON.stringify(actual[out[0].filters.med_org.guid]),'[]');
+ send({type:'SET_FILTERS',requestId:'2',filters:{doctors:['А','Б']}});
+ assert.equal(out.at(-1).type,'ERROR');assert.equal(calls.length,5);
+ } finally {win.__visiologyReactFilterBridge.dispose();}
 });
